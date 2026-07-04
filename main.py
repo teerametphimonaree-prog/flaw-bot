@@ -8,10 +8,10 @@ import uvicorn
 
 app = FastAPI()
 
-# ดึงค่าจาก Environment Variables ใน Render
-line_bot_api = LineBotApi(os.environ["LINE_CHANNEL_ACCESS_TOKEN"])
-handler = WebhookHandler(os.environ["LINE_CHANNEL_SECRET"])
-OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
+# ดึงค่าจาก Environment Variables
+line_bot_api = LineBotApi(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", ""))
+handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET", ""))
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 @app.post("/callback")
 async def handle_callback(request: Request):
@@ -26,24 +26,27 @@ async def handle_callback(request: Request):
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_text = event.message.text
-    
-    # ส่งข้อความไปถาม OpenRouter
-    response = requests.post(
-        url="https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "HTTP-Referer": "https://render.com", 
-            "X-Title": "Flaw-Bot",
-        },
-        json={
-            "model": "openai/gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": user_text}]
-        }
-    )
-    
-    # รับคำตอบจาก AI แล้วส่งกลับไป LINE
-    ai_reply = response.json()['choices'][0]['message']['content']
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=ai_reply))
+    try:
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer": "https://render.com", 
+                "X-Title": "Flaw-Bot",
+            },
+            json={
+                "model": "openai/gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": user_text}]
+            }
+        )
+        if response.status_code == 200:
+            ai_reply = response.json()['choices'][0]['message']['content']
+        else:
+            ai_reply = "ขออภัยครับ ตอนนี้ AI กำลังยุ่งอยู่ ลองใหม่นะครับ"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=ai_reply))
+    except Exception as e:
+        print(f"Error: {e}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ขอโทษทีครับ ระบบมีปัญหาเล็กน้อย"))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
