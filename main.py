@@ -1,4 +1,5 @@
 import os
+import requests
 from fastapi import FastAPI, Request, HTTPException
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -7,12 +8,10 @@ import uvicorn
 
 app = FastAPI()
 
-# --- ใส่ค่าตรงๆ ตรงนี้เลย เพื่อตัดปัญหาเรื่อง Environment บน Render ---
-LINE_CHANNEL_ACCESS_TOKEN = "t24m8xBgP/QKEsrqW6bLKnX9W7mtHjkdyeYuHDl30bmtHKOvcvkyzyn3EPR2PtMRC2Pr2NAT66SPvogb4EZps0ekZ9Ury4xZOTbrWUg7q4ae3dMp7yPt51VI1aHrOOX6LgjT+s2wXRMzK9uH5OuZEAdB04t89/1O/w1cDnyilFU="
-LINE_CHANNEL_SECRET = "fde0b7ca988eeb5f4460fdae8fcf9e5a"
-
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+# ดึงค่าจาก Environment Variables ใน Render
+line_bot_api = LineBotApi(os.environ["LINE_CHANNEL_ACCESS_TOKEN"])
+handler = WebhookHandler(os.environ["LINE_CHANNEL_SECRET"])
+OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 
 @app.post("/callback")
 async def handle_callback(request: Request):
@@ -26,10 +25,26 @@ async def handle_callback(request: Request):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    # ทดสอบแค่ให้มันตอบกลับมาว่าได้รับข้อความแล้ว
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="บอทได้รับข้อความแล้ว!"))
+    user_text = event.message.text
+    
+    # ส่งข้อความไปถาม OpenRouter
+    response = requests.post(
+        url="https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "HTTP-Referer": "https://render.com", 
+            "X-Title": "Flaw-Bot",
+        },
+        json={
+            "model": "openai/gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": user_text}]
+        }
+    )
+    
+    # รับคำตอบจาก AI แล้วส่งกลับไป LINE
+    ai_reply = response.json()['choices'][0]['message']['content']
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=ai_reply))
 
 if __name__ == "__main__":
-    # ใช้พอร์ตที่ Render กำหนด
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
