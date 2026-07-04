@@ -1,36 +1,42 @@
 import os
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from dotenv import load_dotenv
-import uvicorn
 
 load_dotenv()
-API_KEY = os.getenv("OPENROUTER_API_KEY")
-LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-
 app = FastAPI()
 
-def ask_flaw_with_openrouter(prompt):
+line_bot_api = LineBotApi(os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
+handler = WebhookHandler(os.getenv("LINE_CHANNEL_SECRET"))
+
+def ask_openrouter(prompt):
     url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}"}
     data = {"model": "google/gemini-pro-1.5", "messages": [{"role": "user", "content": prompt}]}
     try:
         response = requests.post(url, headers=headers, json=data)
-        return response.json()['choices'][0]['message']['content'] if response.status_code == 200 else "AI Error"
-    except: return "System Error"
+        return response.json()['choices'][0]['message']['content']
+    except: return "AI Error"
 
 @app.post("/callback")
 async def handle_callback(request: Request):
-    payload = await request.json()
-    for event in payload.get("events", []):
-        if event.get("type") == "message":
-            reply_token = event["replyToken"]
-            user_text = event["message"]["text"]
-            reply_text = ask_flaw_with_openrouter(user_text)
-            requests.post("https://api.line.me/v2/bot/message/reply",
-                headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-                json={"replyToken": reply_token, "messages": [{"type": "text", "text": reply_text}]})
+    signature = request.headers.get("X-Line-Signature")
+    body = await request.body()
+    try:
+        handler.handle(body.decode(), signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400)
     return {"status": "ok"}
 
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    reply_text = ask_openrouter(event.message.text)
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
