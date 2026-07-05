@@ -24,7 +24,7 @@ async def handle_callback(request: Request):
     body = await request.body()
     body_str = body.decode()
     
-    logger.info(f"Received request body: {body_str}") # เช็กว่า LINE ส่งอะไรมา
+    logger.info(f"Received request body: {body_str}")
     
     try:
         handler.handle(body_str, signature)
@@ -39,8 +39,8 @@ def handle_message(event):
     user_text = event.message.text
     logger.info(f"Processing message from {user_id}: {user_text}")
 
+    # 1. เรียก AI
     try:
-        # เรียก AI ผ่าน OpenRouter
         response = requests.post(
             url="https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -52,21 +52,22 @@ def handle_message(event):
                 "model": "openai/gpt-3.5-turbo",
                 "messages": [{"role": "user", "content": user_text}]
             },
-            timeout=10 # เพิ่ม Timeout เพื่อป้องกันบอทค้าง
+            timeout=10
         )
         
         if response.status_code == 200:
             ai_reply = response.json()['choices'][0]['message']['content']
         else:
-            logger.error(f"OpenRouter returned status {response.status_code}: {response.text}")
+            logger.error(f"OpenRouter error: {response.text}")
             ai_reply = "ขออภัยครับ ระบบ AI กำลังขัดข้องชั่วคราว"
             
     except Exception as e:
         logger.exception("Error during AI processing")
         ai_reply = "ขออภัยครับ เกิดข้อผิดพลาดในการประมวลผล"
 
-    # ส่งกลับ LINE
+    # 2. ส่งกลับ LINE (มีชุดเดียวจบครับ)
     try:
+        logger.info(f"DEBUG: กำลังจะส่ง reply_token: {event.reply_token}")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=ai_reply))
         logger.info(f"Successfully replied to {user_id}")
     except Exception as e:
